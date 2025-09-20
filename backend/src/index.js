@@ -18,8 +18,12 @@ const __dirname=path.resolve();
 
 app.use(express.json());
 app.use(cookieParser());
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://chat-app-frontend-rr10.onrender.com"
+];
 app.use(cors({
-    origin:"http://localhost:5173",
+    origin:allowedOrigins,
     credentials:true
 }))
 
