@@ -4,6 +4,9 @@ import { toast } from "react-hot-toast";
 import { io } from "socket.io-client";
 
 const BASE_URL=import.meta.env.MODE==="development"?"http://localhost:5000/api":"https://chat-app-2-2qpk.onrender.com/api";
+const SOCKET_URL = import.meta.env.MODE === "development"
+  ? "http://localhost:5000"
+  : "https://chat-app-2-2qpk.onrender.com";
 
 export const useAuthStore=create((set,get)=>({
     authUser:null,
@@ -109,10 +112,11 @@ export const useAuthStore=create((set,get)=>({
         const {authUser}=get()
         if(!authUser || get().socket?.connected)return ;
 
-        const socket=io(BASE_URL,{
+        const socket=io(SOCKET_URL,{
             query:{
                 userId:authUser._id,
             },
+            withCredentials: true,
         })
         socket.connect();
 
