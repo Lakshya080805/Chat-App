@@ -50,8 +50,8 @@ let userSocketMap = {}; // { userId: socketId }
 export function initSocket(server) {
   io = new Server(server, {
     cors: {
-      origin: [
-        "http://localhost:5173",
+      origin: [ true,
+        // "http://localhost:5173",
         // Remove old frontend domain if not used anymore
         //"https://chat-app-frontend-rr10.onrender.com"
       ],
