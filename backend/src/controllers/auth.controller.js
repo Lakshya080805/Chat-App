@@ -121,3 +121,12 @@ export const checkAuth=(req,res)=>{
     res.status(500).json({message:"internal server error"});
   }
 }
+
+const isProd = process.env.NODE_ENV === "production";
+res.cookie("jwt", token, {
+  httpOnly: true,
+  secure: isProd,          // required on Vercel/Render (HTTPS)
+  sameSite: "None",        // allow cross-site cookie
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+  path: "/",               // optional but explicit
+});
