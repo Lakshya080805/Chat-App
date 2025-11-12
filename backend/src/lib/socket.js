@@ -1,3 +1,69 @@
+// // import {Server} from "socket.io";
+// // import http from "http";
+// // import express from 'express';
+
+// // const app=express();
+// // const server=http.createServer(app);
+
+// // const io=new Server(server,{
+// //     cors:{
+// //         origin:["http://localhost:5173"]
+// //     },
+// // });
+
+// // export function getRecieverSocketId(userId){
+// //     return userSocketMap[userId];
+// // }
+
+// // const userSocketMap={}; //{userId:socketId}
+
+
+// // io.on("connection",(socket)=>{
+// //     console.log("A user connected", socket.id);
+
+// //     const 
+// //     userId=socket.handshake.query.userId
+// //     if(userId)userSocketMap[userId]=socket.id
+
+// //     // io.emit used to send events to all the connected clients
+// //     io.emit("getOnlineUsers",Object.keys(userSocketMap));
+
+// //   //   // ✅ --- VIDEO CALL EVENTS ---
+// //   // socket.on("call-user", ({ to, offer }) => {
+// //   //   console.log("➡️ call-user from:", userId, "to:", to);
+// //   //   const targetSocketId = userSocketMap[to];
+// //   //   if (targetSocketId) {
+// //   //     io.to(targetSocketId).emit("incoming-call", { from: userId, offer });
+// //   //     console.log("✅ incoming-call sent to:", to);
+// //   //   } else {
+// //   //     console.log("❌ Target not online:", to);
+// //   //   }
+// //   // });
+
+// //   // socket.on("answer-call", ({ to, answer }) => {
+// //   //   const targetSocketId = userSocketMap[to];
+// //   //   if (targetSocketId) {
+// //   //     io.to(targetSocketId).emit("call-accepted", { answer });
+// //   //     console.log("✅ call-accepted sent to:", to);
+// //   //   }
+// //   // });
+
+// //   // socket.on("ice-candidate", ({ to, candidate }) => {
+// //   //   const targetSocketId = userSocketMap[to];
+// //   //   if (targetSocketId) {
+// //   //     io.to(targetSocketId).emit("ice-candidate", { candidate });
+// //   //   }
+// //   // });
+// //   //-----------------------------------------------------
+// //     socket.on("disconnect",()=>{
+// //         console.log("A user disconnected",socket.id)
+// //         delete userSocketMap[userId];
+// //         io.emit("getOnlineUsers",Object.keys(userSocketMap));
+// //     })
+// // })
+// // export {io,app,server};
+
+
 // import {Server} from "socket.io";
 // import http from "http";
 // import express from 'express';
@@ -21,40 +87,12 @@
 // io.on("connection",(socket)=>{
 //     console.log("A user connected", socket.id);
 
-//     const 
-//     userId=socket.handshake.query.userId
+//     const userId=socket.handshake.query.userId
 //     if(userId)userSocketMap[userId]=socket.id
 
 //     // io.emit used to send events to all the connected clients
 //     io.emit("getOnlineUsers",Object.keys(userSocketMap));
 
-//   //   // ✅ --- VIDEO CALL EVENTS ---
-//   // socket.on("call-user", ({ to, offer }) => {
-//   //   console.log("➡️ call-user from:", userId, "to:", to);
-//   //   const targetSocketId = userSocketMap[to];
-//   //   if (targetSocketId) {
-//   //     io.to(targetSocketId).emit("incoming-call", { from: userId, offer });
-//   //     console.log("✅ incoming-call sent to:", to);
-//   //   } else {
-//   //     console.log("❌ Target not online:", to);
-//   //   }
-//   // });
-
-//   // socket.on("answer-call", ({ to, answer }) => {
-//   //   const targetSocketId = userSocketMap[to];
-//   //   if (targetSocketId) {
-//   //     io.to(targetSocketId).emit("call-accepted", { answer });
-//   //     console.log("✅ call-accepted sent to:", to);
-//   //   }
-//   // });
-
-//   // socket.on("ice-candidate", ({ to, candidate }) => {
-//   //   const targetSocketId = userSocketMap[to];
-//   //   if (targetSocketId) {
-//   //     io.to(targetSocketId).emit("ice-candidate", { candidate });
-//   //   }
-//   // });
-//   //-----------------------------------------------------
 //     socket.on("disconnect",()=>{
 //         console.log("A user disconnected",socket.id)
 //         delete userSocketMap[userId];
@@ -63,40 +101,72 @@
 // })
 // export {io,app,server};
 
+//--------------------------------------------------------------------------------------------------------------------
 
-import {Server} from "socket.io";
+// lib/socket.js
+import { Server } from "socket.io";
 import http from "http";
-import express from 'express';
+import express from "express";
 
-const app=express();
-const server=http.createServer(app);
+export const app = express();
+export const server = http.createServer(app);
 
-const io=new Server(server,{
-    cors:{
-        origin:["http://localhost:5173"]
-    },
-});
+// Allow localhost in development and FRONTEND_URL in production
+const allowedOrigins = [
+  "http://localhost:5173", // dev Vite origin
+];
 
-export function getRecieverSocketId(userId){
-    return userSocketMap[userId];
+if (process.env.NODE_ENV === "production" && process.env.FRONTEND_URL) {
+  allowedOrigins.push(process.env.FRONTEND_URL);
 }
 
-const userSocketMap={}; //{userId:socketId}
+const io = new Server(server, {
+  cors: {
+    origin: (origin, callback) => {
+      // allow requests with no origin (like server-to-server or tools)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error("Origin not allowed by CORS"));
+    },
+    methods: ["GET", "POST"],
+    credentials: true,
+  },
+});
 
+// Map of userId -> socketId (single socket per user). If you expect multiple sockets per user, switch to arrays.
+const userSocketMap = {}; // { userId: socketId }
 
-io.on("connection",(socket)=>{
-    console.log("A user connected", socket.id);
+// Utility to get socket id by user id
+export function getRecieverSocketId(userId) {
+  return userSocketMap[userId];
+}
 
-    const userId=socket.handshake.query.userId
-    if(userId)userSocketMap[userId]=socket.id
+io.on("connection", (socket) => {
+  console.log("A user connected", socket.id);
 
-    // io.emit used to send events to all the connected clients
-    io.emit("getOnlineUsers",Object.keys(userSocketMap));
+  // Socket.IO v4 clients commonly send auth payload; fallback to handshake.query for older code
+  const userId = socket.handshake.auth?.userId || socket.handshake.query?.userId;
 
-    socket.on("disconnect",()=>{
-        console.log("A user disconnected",socket.id)
-        delete userSocketMap[userId];
-        io.emit("getOnlineUsers",Object.keys(userSocketMap));
-    })
-})
-export {io,app,server};
+  if (userId) {
+    // store mapping (if you need multiple sockets per user, make this an array push)
+    userSocketMap[userId] = socket.id;
+  }
+
+  // broadcast current online users to all connected clients
+  io.emit("getOnlineUsers", Object.keys(userSocketMap));
+
+  socket.on("disconnect", () => {
+    console.log("A user disconnected", socket.id);
+
+    // Safely remove the mapping only if it matches this socket id
+    if (userId && userSocketMap[userId] === socket.id) {
+      delete userSocketMap[userId];
+    }
+
+    io.emit("getOnlineUsers", Object.keys(userSocketMap));
+  });
+});
+
+export { io };
