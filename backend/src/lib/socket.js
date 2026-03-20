@@ -85,6 +85,50 @@ io.on("connection", (socket) => {
     userSocketMap[userId] = socket.id;
   }
 
+  // Relay WebRTC offer from caller -> callee
+  socket.on("call-user", ({ to, offer, callType }) => {
+    const receiverSocketId = getRecieverSocketId(to);
+    if (!receiverSocketId || !userId) return;
+
+    io.to(receiverSocketId).emit("call-user", {
+      from: userId,
+      offer,
+      callType,
+    });
+  });
+
+  // Relay WebRTC answer from callee -> caller
+  socket.on("answer-call", ({ to, answer }) => {
+    const receiverSocketId = getRecieverSocketId(to);
+    if (!receiverSocketId || !userId) return;
+
+    io.to(receiverSocketId).emit("answer-call", {
+      from: userId,
+      answer,
+    });
+  });
+
+  // Relay ICE candidates both directions
+  socket.on("ice-candidate", ({ to, candidate }) => {
+    const receiverSocketId = getRecieverSocketId(to);
+    if (!receiverSocketId || !userId) return;
+
+    io.to(receiverSocketId).emit("ice-candidate", {
+      from: userId,
+      candidate,
+    });
+  });
+
+  // Notify remote peer that call ended/rejected
+  socket.on("end-call", ({ to }) => {
+    const receiverSocketId = getRecieverSocketId(to);
+    if (!receiverSocketId || !userId) return;
+
+    io.to(receiverSocketId).emit("end-call", {
+      from: userId,
+    });
+  });
+
   // broadcast current online users to all connected clients
   io.emit("getOnlineUsers", Object.keys(userSocketMap));
 

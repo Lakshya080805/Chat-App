@@ -148,6 +148,10 @@ export const useAuthStore = create((set, get) => ({
   isCheckingAuth: true,
   onlineUsers: [],
   socket: null,
+  incomingCall: null,
+  remoteAnswer: null,
+  remoteIceCandidate: null,
+  callEndedBy: null,
 
   checkAuth: async () => {
     try {
@@ -254,6 +258,23 @@ export const useAuthStore = create((set, get) => ({
       set({ onlineUsers: userIds });
     });
 
+    // WebRTC signaling events
+    s.on("call-user", (payload) => {
+      set({ incomingCall: payload });
+    });
+
+    s.on("answer-call", (payload) => {
+      set({ remoteAnswer: payload });
+    });
+
+    s.on("ice-candidate", (payload) => {
+      set({ remoteIceCandidate: payload });
+    });
+
+    s.on("end-call", (payload) => {
+      set({ callEndedBy: payload?.from || null, incomingCall: null, remoteAnswer: null, remoteIceCandidate: null });
+    });
+
     // safe cleanup on disconnect
     s.on("disconnect", () => {
       set({ onlineUsers: [] });
@@ -271,6 +292,42 @@ export const useAuthStore = create((set, get) => ({
       }
     }
     // clear socket and online users from store
-    set({ socket: null, onlineUsers: [] });
+    set({
+      socket: null,
+      onlineUsers: [],
+      incomingCall: null,
+      remoteAnswer: null,
+      remoteIceCandidate: null,
+      callEndedBy: null,
+    });
+  },
+
+  callUser: ({ to, offer, callType = "video" }) => {
+    const socket = get().socket;
+    if (!socket?.connected) return;
+    socket.emit("call-user", { to, offer, callType });
+  },
+
+  answerCall: ({ to, answer }) => {
+    const socket = get().socket;
+    if (!socket?.connected) return;
+    socket.emit("answer-call", { to, answer });
+  },
+
+  sendIceCandidate: ({ to, candidate }) => {
+    const socket = get().socket;
+    if (!socket?.connected) return;
+    socket.emit("ice-candidate", { to, candidate });
+  },
+
+  endCall: ({ to }) => {
+    const socket = get().socket;
+    if (!socket?.connected) return;
+    socket.emit("end-call", { to });
+    set({ incomingCall: null, remoteAnswer: null, remoteIceCandidate: null, callEndedBy: null });
+  },
+
+  clearCallSignals: () => {
+    set({ incomingCall: null, remoteAnswer: null, remoteIceCandidate: null, callEndedBy: null });
   },
 }));
