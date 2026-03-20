@@ -80,6 +80,7 @@ const ChatHeader = () => {
   const cachedIceServersRef = useRef(buildIceServers());
   const ringtoneIntervalRef = useRef(null);
   const audioContextRef = useRef(null);
+  const statsIntervalRef = useRef(null);
 
   const playRingtonePulse = async () => {
     try {
@@ -181,6 +182,10 @@ const ChatHeader = () => {
       const res = await axiosInstance.get("/calls/ice-servers");
       const fetchedIceServers = res?.data?.iceServers;
       if (Array.isArray(fetchedIceServers) && fetchedIceServers.length > 0) {
+        logWebrtcDebug("fetched ice servers", {
+          count: fetchedIceServers.length,
+          urls: fetchedIceServers.map((s) => s.urls),
+        });
         cachedIceServersRef.current = fetchedIceServers;
       }
     } catch (error) {
@@ -188,6 +193,85 @@ const ChatHeader = () => {
     }
 
     return cachedIceServersRef.current;
+  };
+
+  const clearStatsPolling = () => {
+    if (statsIntervalRef.current) {
+      clearInterval(statsIntervalRef.current);
+      statsIntervalRef.current = null;
+    }
+  };
+
+  const logConnectionStatsSnapshot = async (label = "stats") => {
+    if (!WEBRTC_DEBUG || !peerConnectionRef.current) return;
+
+    try {
+      const stats = await peerConnectionRef.current.getStats();
+      let selectedPair = null;
+      let localCandidate = null;
+      let remoteCandidate = null;
+
+      stats.forEach((report) => {
+        if (report.type === "transport" && report.selectedCandidatePairId) {
+          selectedPair = stats.get(report.selectedCandidatePairId) || selectedPair;
+        }
+      });
+
+      if (!selectedPair) {
+        stats.forEach((report) => {
+          if (report.type === "candidate-pair" && report.nominated && report.state === "succeeded") {
+            selectedPair = report;
+          }
+        });
+      }
+
+      if (selectedPair?.localCandidateId) {
+        localCandidate = stats.get(selectedPair.localCandidateId) || null;
+      }
+
+      if (selectedPair?.remoteCandidateId) {
+        remoteCandidate = stats.get(selectedPair.remoteCandidateId) || null;
+      }
+
+      logWebrtcDebug(`${label} snapshot`, {
+        connectionState: peerConnectionRef.current.connectionState,
+        iceConnectionState: peerConnectionRef.current.iceConnectionState,
+        signalingState: peerConnectionRef.current.signalingState,
+        selectedPair: selectedPair
+          ? {
+              state: selectedPair.state,
+              nominated: selectedPair.nominated,
+              bytesSent: selectedPair.bytesSent,
+              bytesReceived: selectedPair.bytesReceived,
+              currentRoundTripTime: selectedPair.currentRoundTripTime,
+            }
+          : null,
+        localCandidate: localCandidate
+          ? {
+              candidateType: localCandidate.candidateType,
+              protocol: localCandidate.protocol,
+              relayProtocol: localCandidate.relayProtocol,
+            }
+          : null,
+        remoteCandidate: remoteCandidate
+          ? {
+              candidateType: remoteCandidate.candidateType,
+              protocol: remoteCandidate.protocol,
+              relayProtocol: remoteCandidate.relayProtocol,
+            }
+          : null,
+      });
+    } catch (error) {
+      logWebrtcDebug(`${label} snapshot error`, { message: error?.message });
+    }
+  };
+
+  const startStatsPolling = () => {
+    if (!WEBRTC_DEBUG) return;
+    clearStatsPolling();
+    statsIntervalRef.current = setInterval(() => {
+      logConnectionStatsSnapshot("periodic");
+    }, 2000);
   };
 
   const createPeerConnection = async (targetUserId, remoteMediaStream) => {
@@ -216,6 +300,16 @@ const ChatHeader = () => {
       }
     };
 
+    peerConnection.onicecandidateerror = (event) => {
+      logWebrtcDebug("icecandidateerror", {
+        address: event?.address,
+        port: event?.port,
+        url: event?.url,
+        errorCode: event?.errorCode,
+        errorText: event?.errorText,
+      });
+    };
+
     peerConnection.ontrack = (event) => {
       logWebrtcDebug("remote track", {
         streamCount: event.streams?.length || 0,
@@ -235,10 +329,12 @@ const ChatHeader = () => {
       setConnectionState(state);
       if (state === "connected") {
         setCallStatus("Connected");
+        logConnectionStatsSnapshot("connected");
       } else if (state === "connecting") {
         setCallStatus("Connecting");
       } else if (state === "disconnected" || state === "failed") {
         setCallStatus("Ended");
+        logConnectionStatsSnapshot(state);
       }
     };
 
@@ -247,6 +343,9 @@ const ChatHeader = () => {
         state: peerConnection.iceConnectionState,
       });
       setIceConnectionState(peerConnection.iceConnectionState);
+      if (peerConnection.iceConnectionState === "failed") {
+        logConnectionStatsSnapshot("ice-failed");
+      }
     };
 
     peerConnection.onsignalingstatechange = () => {
@@ -260,9 +359,12 @@ const ChatHeader = () => {
   };
 
   const cleanupCallState = () => {
+    clearStatsPolling();
+
     if (peerConnectionRef.current) {
       peerConnectionRef.current.onicecandidate = null;
       peerConnectionRef.current.ontrack = null;
+      peerConnectionRef.current.onicecandidateerror = null;
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
     }
@@ -366,6 +468,7 @@ const ChatHeader = () => {
       setRemoteStream(remoteMediaStream);
       setIsCallModalOpen(true);
       setCallStatus("Connecting");
+      startStatsPolling();
       setPendingIncomingCall(null);
       clearCallSignals();
 
@@ -426,6 +529,7 @@ const ChatHeader = () => {
       setLocalStream(stream);
       setRemoteStream(remoteMediaStream);
       setIsCallModalOpen(true);
+      startStatsPolling();
     } catch (error) {
       console.error("Failed to start call:", error);
       toast.error("Unable to start call. Microphone/camera is unavailable.");
@@ -533,6 +637,7 @@ const ChatHeader = () => {
 
   useEffect(() => {
     return () => {
+      clearStatsPolling();
       stopIncomingRingtone();
       if (audioContextRef.current) {
         audioContextRef.current.close();
