@@ -17,3 +17,12 @@ export const axiosInstance = axios.create({
   baseURL: `${BASE_URL}/api`,
   withCredentials: true,
 });
+
+axiosInstance.interceptors.request.use((config) => {
+  const token = localStorage.getItem("chat-auth-token");
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
