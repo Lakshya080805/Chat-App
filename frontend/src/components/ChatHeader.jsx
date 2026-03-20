@@ -418,9 +418,9 @@ const ChatHeader = () => {
 
       const candidate = remoteIceCandidate.candidate;
       if (!candidate) return;
+      setRemoteCandidateCount((prev) => prev + 1);
 
       if (peerConnectionRef.current.remoteDescription) {
-        setRemoteCandidateCount((prev) => prev + 1);
         await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
       } else {
         pendingIceCandidatesRef.current.push(candidate);

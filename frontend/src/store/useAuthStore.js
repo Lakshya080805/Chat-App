@@ -159,7 +159,9 @@ export const useAuthStore = create((set, get) => ({
       set({ authUser: res.data });
       get().connectSocket();
     } catch (error) {
-      console.log("error in checkAuth", error);
+      if (error?.response?.status !== 401) {
+        console.log("error in checkAuth", error);
+      }
       localStorage.removeItem("chat-auth-token");
       set({ authUser: null });
     } finally {
@@ -241,7 +243,6 @@ export const useAuthStore = create((set, get) => ({
     // create socket but don't auto connect until configured
     const s = io(BASE_URL, {
       autoConnect: false,
-      transports: ["websocket"], // optional but forces websocket transport
       auth: {
         userId: authUser._id, // server reads handshake.auth.userId
       },
