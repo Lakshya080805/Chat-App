@@ -26,7 +26,20 @@ export const getIceServers = async (req, res) => {
     }
 
     const data = await twilioRes.json();
-    const iceServers = Array.isArray(data.ice_servers) ? data.ice_servers : [];
+    const rawIceServers = Array.isArray(data.ice_servers) ? data.ice_servers : [];
+
+    // Twilio can return legacy `url` key; WebRTC expects `urls`.
+    const iceServers = rawIceServers
+      .map((server) => {
+        const urls = server.urls || server.url;
+        if (!urls) return null;
+
+        const normalized = { urls };
+        if (server.username) normalized.username = server.username;
+        if (server.credential) normalized.credential = server.credential;
+        return normalized;
+      })
+      .filter(Boolean);
 
     return res.status(200).json({ iceServers });
   } catch (error) {

@@ -59,6 +59,11 @@ const ChatHeader = () => {
   const [callStatus, setCallStatus] = useState("Idle");
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
+  const [iceConnectionState, setIceConnectionState] = useState("new");
+  const [connectionState, setConnectionState] = useState("new");
+  const [signalingState, setSignalingState] = useState("stable");
+  const [localCandidateCount, setLocalCandidateCount] = useState(0);
+  const [remoteCandidateCount, setRemoteCandidateCount] = useState(0);
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [pendingIncomingCall, setPendingIncomingCall] = useState(null);
@@ -173,8 +178,13 @@ const ChatHeader = () => {
     const iceServers = await getIceServers();
     const peerConnection = new RTCPeerConnection({ iceServers });
 
+    setIceConnectionState(peerConnection.iceConnectionState);
+    setConnectionState(peerConnection.connectionState);
+    setSignalingState(peerConnection.signalingState);
+
     peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
+        setLocalCandidateCount((prev) => prev + 1);
         sendIceCandidate({
           to: targetUserId,
           candidate: event.candidate,
@@ -193,6 +203,7 @@ const ChatHeader = () => {
 
     peerConnection.onconnectionstatechange = () => {
       const state = peerConnection.connectionState;
+      setConnectionState(state);
       if (state === "connected") {
         setCallStatus("Connected");
       } else if (state === "connecting") {
@@ -200,6 +211,14 @@ const ChatHeader = () => {
       } else if (state === "disconnected" || state === "failed") {
         setCallStatus("Ended");
       }
+    };
+
+    peerConnection.oniceconnectionstatechange = () => {
+      setIceConnectionState(peerConnection.iceConnectionState);
+    };
+
+    peerConnection.onsignalingstatechange = () => {
+      setSignalingState(peerConnection.signalingState);
     };
 
     return peerConnection;
@@ -226,6 +245,11 @@ const ChatHeader = () => {
     setIsCallModalOpen(false);
     setIsMuted(false);
     setIsCameraOff(false);
+    setIceConnectionState("new");
+    setConnectionState("new");
+    setSignalingState("stable");
+    setLocalCandidateCount(0);
+    setRemoteCandidateCount(0);
     activePeerUserIdRef.current = null;
     pendingIceCandidatesRef.current = [];
   };
@@ -396,6 +420,7 @@ const ChatHeader = () => {
       if (!candidate) return;
 
       if (peerConnectionRef.current.remoteDescription) {
+        setRemoteCandidateCount((prev) => prev + 1);
         await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
       } else {
         pendingIceCandidatesRef.current.push(candidate);
@@ -523,6 +548,13 @@ const ChatHeader = () => {
         isCameraOff={isCameraOff}
         onToggleMute={toggleMute}
         onToggleCamera={toggleCamera}
+        diagnostics={{
+          iceConnectionState,
+          connectionState,
+          signalingState,
+          localCandidateCount,
+          remoteCandidateCount,
+        }}
       />
     </div>
   );

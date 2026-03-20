@@ -11,6 +11,7 @@ const CallModal = ({
   isCameraOff = false,
   onToggleMute,
   onToggleCamera,
+  diagnostics,
 }) => {
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
@@ -90,6 +91,14 @@ const CallModal = ({
           </button>
         </div>
         <p className="mt-2 text-xs text-base-content/70">Status: {callStatus}</p>
+        {diagnostics && (
+          <div className="mt-2 w-full rounded border border-base-300 p-2 text-xs text-base-content/70">
+            <p>ICE state: {diagnostics.iceConnectionState}</p>
+            <p>Peer state: {diagnostics.connectionState}</p>
+            <p>Signaling: {diagnostics.signalingState}</p>
+            <p>Candidates: local {diagnostics.localCandidateCount} | remote {diagnostics.remoteCandidateCount}</p>
+          </div>
+        )}
       </div>
     </div>
   );
