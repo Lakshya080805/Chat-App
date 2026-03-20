@@ -202,6 +202,39 @@ const ChatHeader = () => {
     }
   };
 
+  const waitForIceGatheringComplete = (peerConnection, timeoutMs = 3000) => {
+    if (!peerConnection) return Promise.resolve();
+    if (peerConnection.iceGatheringState === "complete") return Promise.resolve();
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        peerConnection.removeEventListener("icegatheringstatechange", onStateChange);
+        clearTimeout(timer);
+        resolve();
+      };
+
+      const onStateChange = () => {
+        if (peerConnection.iceGatheringState === "complete") {
+          logWebrtcDebug("ice gathering complete");
+          finish();
+        }
+      };
+
+      const timer = setTimeout(() => {
+        logWebrtcDebug("ice gathering timeout", {
+          state: peerConnection.iceGatheringState,
+          timeoutMs,
+        });
+        finish();
+      }, timeoutMs);
+
+      peerConnection.addEventListener("icegatheringstatechange", onStateChange);
+    });
+  };
+
   const logConnectionStatsSnapshot = async (label = "stats") => {
     if (!WEBRTC_DEBUG || !peerConnectionRef.current) return;
 
@@ -454,13 +487,15 @@ const ChatHeader = () => {
 
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
+      await waitForIceGatheringComplete(peerConnection);
+      const finalAnswer = peerConnection.localDescription || answer;
       logWebrtcDebug("create/setLocalDescription(answer) success", {
         to: pendingIncomingCall.from,
       });
 
       answerCall({
         to: pendingIncomingCall.from,
-        answer,
+        answer: finalAnswer,
       });
 
       setIsVideoCall(effectiveType === "video");
@@ -513,6 +548,8 @@ const ChatHeader = () => {
 
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
+      await waitForIceGatheringComplete(peerConnection);
+      const finalOffer = peerConnection.localDescription || offer;
       logWebrtcDebug("create/setLocalDescription(offer) success", {
         to: selectedUser._id,
         effectiveType,
@@ -520,7 +557,7 @@ const ChatHeader = () => {
 
       callUser({
         to: selectedUser._id,
-        offer,
+        offer: finalOffer,
         callType: effectiveType,
       });
       setCallStatus("Ringing");
