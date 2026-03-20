@@ -140,6 +140,13 @@ const BASE_URL =
     ? "http://localhost:5000"
     : import.meta.env.VITE_BACKEND_URL; // Vercel env var
 
+const SOCKET_DEBUG = String(import.meta.env.VITE_DEBUG_WEBRTC || "false").toLowerCase() === "true";
+
+const logSocketDebug = (...args) => {
+  if (!SOCKET_DEBUG) return;
+  console.log("[socket-debug]", ...args);
+};
+
 export const useAuthStore = create((set, get) => ({
   authUser: null,
   isSigningUp: false,
@@ -257,35 +264,53 @@ export const useAuthStore = create((set, get) => ({
 
     s.on("connect", () => {
       console.log("socket connected:", s.id);
+      logSocketDebug("connected", { socketId: s.id, userId: authUser._id });
     });
 
     s.on("connect_error", (err) => {
       console.error("socket connect_error:", err);
+      logSocketDebug("connect_error", { message: err?.message, name: err?.name });
     });
 
     s.on("getOnlineUsers", (userIds) => {
+      logSocketDebug("getOnlineUsers", { count: userIds?.length || 0, userIds });
       set({ onlineUsers: userIds });
     });
 
     // WebRTC signaling events
     s.on("call-user", (payload) => {
+      logSocketDebug("recv call-user", {
+        from: payload?.from,
+        callType: payload?.callType,
+        hasOffer: Boolean(payload?.offer),
+      });
       set({ incomingCall: payload });
     });
 
     s.on("answer-call", (payload) => {
+      logSocketDebug("recv answer-call", {
+        from: payload?.from,
+        hasAnswer: Boolean(payload?.answer),
+      });
       set({ remoteAnswer: payload });
     });
 
     s.on("ice-candidate", (payload) => {
+      logSocketDebug("recv ice-candidate", {
+        from: payload?.from,
+        candidateType: payload?.candidate?.type || payload?.candidate?.candidate,
+      });
       set({ remoteIceCandidate: payload });
     });
 
     s.on("end-call", (payload) => {
+      logSocketDebug("recv end-call", { from: payload?.from });
       set({ callEndedBy: payload?.from || null, incomingCall: null, remoteAnswer: null, remoteIceCandidate: null });
     });
 
     // safe cleanup on disconnect
     s.on("disconnect", () => {
+      logSocketDebug("disconnected", { socketId: s.id, userId: authUser._id });
       set({ onlineUsers: [] });
       // keep socket until disconnectSocket clears it so you can inspect state if needed
     });
@@ -314,24 +339,41 @@ export const useAuthStore = create((set, get) => ({
   callUser: ({ to, offer, callType = "video" }) => {
     const socket = get().socket;
     if (!socket?.connected) return;
+    logSocketDebug("emit call-user", {
+      socketId: socket.id,
+      to,
+      callType,
+      hasOffer: Boolean(offer),
+    });
     socket.emit("call-user", { to, offer, callType });
   },
 
   answerCall: ({ to, answer }) => {
     const socket = get().socket;
     if (!socket?.connected) return;
+    logSocketDebug("emit answer-call", {
+      socketId: socket.id,
+      to,
+      hasAnswer: Boolean(answer),
+    });
     socket.emit("answer-call", { to, answer });
   },
 
   sendIceCandidate: ({ to, candidate }) => {
     const socket = get().socket;
     if (!socket?.connected) return;
+    logSocketDebug("emit ice-candidate", {
+      socketId: socket.id,
+      to,
+      candidateType: candidate?.type || candidate?.candidate,
+    });
     socket.emit("ice-candidate", { to, candidate });
   },
 
   endCall: ({ to }) => {
     const socket = get().socket;
     if (!socket?.connected) return;
+    logSocketDebug("emit end-call", { socketId: socket.id, to });
     socket.emit("end-call", { to });
     set({ incomingCall: null, remoteAnswer: null, remoteIceCandidate: null, callEndedBy: null });
   },

@@ -39,6 +39,13 @@ import { Server } from "socket.io";
 import http from "http";
 import express from "express";
 
+const SOCKET_DEBUG = String(process.env.DEBUG_WEBRTC || "false").toLowerCase() === "true";
+
+const logSocketDebug = (...args) => {
+  if (!SOCKET_DEBUG) return;
+  console.log("[socket-debug]", ...args);
+};
+
 export const app = express();
 export const server = http.createServer(app);
 
@@ -66,13 +73,36 @@ const io = new Server(server, {
   },
 });
 
-// Map of userId -> socketId (single socket per user). If you expect multiple sockets per user, switch to arrays.
-const userSocketMap = {}; // { userId: socketId }
+// Map of userId -> Set<socketId> so the same user can be connected on multiple devices/tabs.
+const userSocketMap = {}; // { userId: Set<socketId> }
 
-// Utility to get socket id by user id
+const getUserSocketIds = (userId) => {
+  if (!userId) return [];
+  const sockets = userSocketMap[userId];
+  if (!sockets) return [];
+  return Array.from(sockets);
+};
+
+// Backward-compatible helper used by message controller (first socket only).
 export function getRecieverSocketId(userId) {
-  return userSocketMap[userId];
+  return getUserSocketIds(userId)[0];
 }
+
+const emitToUser = (targetUserId, eventName, payload) => {
+  const receiverSocketIds = getUserSocketIds(targetUserId);
+  logSocketDebug("emitToUser", {
+    eventName,
+    targetUserId,
+    receiverSocketCount: receiverSocketIds.length,
+  });
+  if (receiverSocketIds.length === 0) return false;
+
+  receiverSocketIds.forEach((socketId) => {
+    io.to(socketId).emit(eventName, payload);
+  });
+
+  return true;
+};
 
 io.on("connection", (socket) => {
   console.log("A user connected", socket.id);
@@ -81,16 +111,28 @@ io.on("connection", (socket) => {
   const userId = socket.handshake.auth?.userId || socket.handshake.query?.userId;
 
   if (userId) {
-    // store mapping (if you need multiple sockets per user, make this an array push)
-    userSocketMap[userId] = socket.id;
+    if (!userSocketMap[userId]) {
+      userSocketMap[userId] = new Set();
+    }
+    userSocketMap[userId].add(socket.id);
+    logSocketDebug("user socket added", {
+      userId,
+      socketId: socket.id,
+      socketCount: userSocketMap[userId].size,
+    });
   }
 
   // Relay WebRTC offer from caller -> callee
   socket.on("call-user", ({ to, offer, callType }) => {
-    const receiverSocketId = getRecieverSocketId(to);
-    if (!receiverSocketId || !userId) return;
+    if (!to || !userId) return;
+    logSocketDebug("recv call-user", {
+      from: userId,
+      to,
+      callType,
+      hasOffer: Boolean(offer),
+    });
 
-    io.to(receiverSocketId).emit("call-user", {
+    emitToUser(to, "call-user", {
       from: userId,
       offer,
       callType,
@@ -99,10 +141,14 @@ io.on("connection", (socket) => {
 
   // Relay WebRTC answer from callee -> caller
   socket.on("answer-call", ({ to, answer }) => {
-    const receiverSocketId = getRecieverSocketId(to);
-    if (!receiverSocketId || !userId) return;
+    if (!to || !userId) return;
+    logSocketDebug("recv answer-call", {
+      from: userId,
+      to,
+      hasAnswer: Boolean(answer),
+    });
 
-    io.to(receiverSocketId).emit("answer-call", {
+    emitToUser(to, "answer-call", {
       from: userId,
       answer,
     });
@@ -110,10 +156,14 @@ io.on("connection", (socket) => {
 
   // Relay ICE candidates both directions
   socket.on("ice-candidate", ({ to, candidate }) => {
-    const receiverSocketId = getRecieverSocketId(to);
-    if (!receiverSocketId || !userId) return;
+    if (!to || !userId) return;
+    logSocketDebug("recv ice-candidate", {
+      from: userId,
+      to,
+      candidateType: candidate?.type || candidate?.candidate,
+    });
 
-    io.to(receiverSocketId).emit("ice-candidate", {
+    emitToUser(to, "ice-candidate", {
       from: userId,
       candidate,
     });
@@ -121,10 +171,10 @@ io.on("connection", (socket) => {
 
   // Notify remote peer that call ended/rejected
   socket.on("end-call", ({ to }) => {
-    const receiverSocketId = getRecieverSocketId(to);
-    if (!receiverSocketId || !userId) return;
+    if (!to || !userId) return;
+    logSocketDebug("recv end-call", { from: userId, to });
 
-    io.to(receiverSocketId).emit("end-call", {
+    emitToUser(to, "end-call", {
       from: userId,
     });
   });
@@ -135,9 +185,17 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     console.log("A user disconnected", socket.id);
 
-    // Safely remove the mapping only if it matches this socket id
-    if (userId && userSocketMap[userId] === socket.id) {
-      delete userSocketMap[userId];
+    if (userId && userSocketMap[userId]) {
+      userSocketMap[userId].delete(socket.id);
+      logSocketDebug("user socket removed", {
+        userId,
+        socketId: socket.id,
+        socketCount: userSocketMap[userId].size,
+      });
+      if (userSocketMap[userId].size === 0) {
+        delete userSocketMap[userId];
+        logSocketDebug("user offline", { userId });
+      }
     }
 
     io.emit("getOnlineUsers", Object.keys(userSocketMap));

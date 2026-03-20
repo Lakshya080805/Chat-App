@@ -7,6 +7,13 @@ import { useAuthStore } from "../store/useAuthStore";
 import { useChatStore } from "../store/useChatStore";
 import CallModal from "./CallModal";
 
+const WEBRTC_DEBUG = String(import.meta.env.VITE_DEBUG_WEBRTC || "false").toLowerCase() === "true";
+
+const logWebrtcDebug = (...args) => {
+  if (!WEBRTC_DEBUG) return;
+  console.log("[webrtc-debug]", ...args);
+};
+
 const buildIceServers = () => {
   const stunEnv = import.meta.env.VITE_STUN_URLS;
   const turnEnv = import.meta.env.VITE_TURN_URLS;
@@ -122,10 +129,19 @@ const ChatHeader = () => {
     if (!peerConnectionRef.current) return;
     if (!peerConnectionRef.current.remoteDescription) return;
 
+    logWebrtcDebug("flushPendingIceCandidates start", {
+      pendingCount: pendingIceCandidatesRef.current.length,
+      remoteDescriptionType: peerConnectionRef.current.remoteDescription?.type,
+    });
+
     while (pendingIceCandidatesRef.current.length > 0) {
       const candidate = pendingIceCandidatesRef.current.shift();
       await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
     }
+
+    logWebrtcDebug("flushPendingIceCandidates done", {
+      pendingCount: pendingIceCandidatesRef.current.length,
+    });
   };
 
   const getMediaWithFallback = async (requestedType) => {
@@ -176,6 +192,10 @@ const ChatHeader = () => {
 
   const createPeerConnection = async (targetUserId, remoteMediaStream) => {
     const iceServers = await getIceServers();
+    logWebrtcDebug("createPeerConnection", {
+      targetUserId,
+      iceServerCount: Array.isArray(iceServers) ? iceServers.length : 0,
+    });
     const peerConnection = new RTCPeerConnection({ iceServers });
 
     setIceConnectionState(peerConnection.iceConnectionState);
@@ -185,6 +205,10 @@ const ChatHeader = () => {
     peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
         setLocalCandidateCount((prev) => prev + 1);
+        logWebrtcDebug("local ice-candidate", {
+          to: targetUserId,
+          candidateType: event.candidate.type || event.candidate.candidate,
+        });
         sendIceCandidate({
           to: targetUserId,
           candidate: event.candidate,
@@ -193,6 +217,10 @@ const ChatHeader = () => {
     };
 
     peerConnection.ontrack = (event) => {
+      logWebrtcDebug("remote track", {
+        streamCount: event.streams?.length || 0,
+        trackKinds: event.streams?.[0]?.getTracks()?.map((t) => t.kind) || [],
+      });
       event.streams[0].getTracks().forEach((track) => {
         const alreadyAdded = remoteMediaStream.getTracks().some((t) => t.id === track.id);
         if (!alreadyAdded) {
@@ -203,6 +231,7 @@ const ChatHeader = () => {
 
     peerConnection.onconnectionstatechange = () => {
       const state = peerConnection.connectionState;
+      logWebrtcDebug("connectionstatechange", { state });
       setConnectionState(state);
       if (state === "connected") {
         setCallStatus("Connected");
@@ -214,10 +243,16 @@ const ChatHeader = () => {
     };
 
     peerConnection.oniceconnectionstatechange = () => {
+      logWebrtcDebug("iceconnectionstatechange", {
+        state: peerConnection.iceConnectionState,
+      });
       setIceConnectionState(peerConnection.iceConnectionState);
     };
 
     peerConnection.onsignalingstatechange = () => {
+      logWebrtcDebug("signalingstatechange", {
+        state: peerConnection.signalingState,
+      });
       setSignalingState(peerConnection.signalingState);
     };
 
@@ -290,6 +325,11 @@ const ChatHeader = () => {
   const acceptIncomingCall = async () => {
     if (!pendingIncomingCall) return;
     if (peerConnectionRef.current) return;
+    logWebrtcDebug("acceptIncomingCall", {
+      from: pendingIncomingCall.from,
+      callType: pendingIncomingCall.callType,
+      hasOffer: Boolean(pendingIncomingCall.offer),
+    });
     stopIncomingRingtone();
 
     try {
@@ -306,9 +346,15 @@ const ChatHeader = () => {
       });
 
       await peerConnection.setRemoteDescription(new RTCSessionDescription(pendingIncomingCall.offer));
+      logWebrtcDebug("setRemoteDescription(offer) success", {
+        from: pendingIncomingCall.from,
+      });
 
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
+      logWebrtcDebug("create/setLocalDescription(answer) success", {
+        to: pendingIncomingCall.from,
+      });
 
       answerCall({
         to: pendingIncomingCall.from,
@@ -346,6 +392,10 @@ const ChatHeader = () => {
 
   const startCall = async (callType) => {
     try {
+      logWebrtcDebug("startCall", {
+        to: selectedUser?._id,
+        requestedType: callType,
+      });
       setCallStatus("Connecting");
       const { stream, effectiveType } = await getMediaWithFallback(callType);
       const remoteMediaStream = new MediaStream();
@@ -360,6 +410,10 @@ const ChatHeader = () => {
 
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
+      logWebrtcDebug("create/setLocalDescription(offer) success", {
+        to: selectedUser._id,
+        effectiveType,
+      });
 
       callUser({
         to: selectedUser._id,
@@ -383,6 +437,11 @@ const ChatHeader = () => {
   useEffect(() => {
     if (!incomingCall) return;
     if (peerConnectionRef.current) return;
+    logWebrtcDebug("incomingCall", {
+      from: incomingCall.from,
+      callType: incomingCall.callType,
+      hasOffer: Boolean(incomingCall.offer),
+    });
     setCallStatus("Ringing");
     setPendingIncomingCall(incomingCall);
   }, [incomingCall]);
@@ -400,8 +459,17 @@ const ChatHeader = () => {
       if (!remoteAnswer || !peerConnectionRef.current) return;
       if (activePeerUserIdRef.current && remoteAnswer.from !== activePeerUserIdRef.current) return;
 
+      logWebrtcDebug("remoteAnswer received", {
+        from: remoteAnswer.from,
+        hasAnswer: Boolean(remoteAnswer.answer),
+        signalingState: peerConnectionRef.current.signalingState,
+      });
+
       if (peerConnectionRef.current.signalingState === "have-local-offer") {
         await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(remoteAnswer.answer));
+        logWebrtcDebug("setRemoteDescription(answer) success", {
+          from: remoteAnswer.from,
+        });
         await flushPendingIceCandidates();
       }
     };
@@ -419,10 +487,18 @@ const ChatHeader = () => {
       const candidate = remoteIceCandidate.candidate;
       if (!candidate) return;
       setRemoteCandidateCount((prev) => prev + 1);
+      logWebrtcDebug("remote ice-candidate", {
+        from: remoteIceCandidate.from,
+        candidateType: candidate.type || candidate.candidate,
+        hasRemoteDescription: Boolean(peerConnectionRef.current.remoteDescription),
+      });
 
       if (peerConnectionRef.current.remoteDescription) {
         await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
       } else {
+        logWebrtcDebug("queue remote ice-candidate", {
+          from: remoteIceCandidate.from,
+        });
         pendingIceCandidatesRef.current.push(candidate);
       }
     };
