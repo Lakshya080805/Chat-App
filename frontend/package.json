@@ -14,6 +14,7 @@
     "axios": "^1.11.0",
     "chat-application": "file:..",
     "emoji-picker-react": "^4.18.0",
+    "livekit-client": "^2.18.0",
     "lucide-react": "^0.543.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",

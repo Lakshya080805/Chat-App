@@ -1,12 +1,13 @@
 
 import { useEffect, useRef, useState } from "react";
-import { Phone, Video, X, MoreHorizontal } from "lucide-react";
+import { Phone, Video, X, MoreHorizontal, Users } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { axiosInstance } from "../lib/axios";
 import { useAuthStore } from "../store/useAuthStore";
 import { useChatStore } from "../store/useChatStore";
 import CallModal from "./CallModal";
 import GroupSettingsModal from "./GroupSettingsModal";
+import GroupCallModal from "./GroupCallModal";
 
 const WEBRTC_DEBUG = String(import.meta.env.VITE_DEBUG_WEBRTC || "false").toLowerCase() === "true";
 
@@ -53,6 +54,7 @@ const ChatHeader = () => {
   const {
     authUser,
     onlineUsers,
+    socket,
     callUser,
     answerCall,
     sendIceCandidate,
@@ -77,6 +79,10 @@ const ChatHeader = () => {
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [pendingIncomingCall, setPendingIncomingCall] = useState(null);
+  const [activeGroupRoom, setActiveGroupRoom] = useState(null);
+  const [groupCallType, setGroupCallType] = useState("video");
+  const [isGroupCallOpen, setIsGroupCallOpen] = useState(false);
+  const autoJoinGuardRef = useRef(false);
   const peerConnectionRef = useRef(null);
   const activePeerUserIdRef = useRef(null);
   const pendingIceCandidatesRef = useRef([]);
@@ -716,6 +722,179 @@ const ChatHeader = () => {
     ? users.find((user) => user._id === pendingIncomingCall.from)
     : null;
 
+  useEffect(() => {
+    if (!socket || !selectedChat?._id) return;
+
+    const handleRoomCreate = ({ roomId, chatId, hostId }) => {
+      if (String(chatId) !== String(selectedChat._id)) return;
+      setActiveGroupRoom({ roomId, chatId, hostId });
+    };
+
+    const handleRoomEnded = ({ roomId, chatId }) => {
+      if (String(chatId) !== String(selectedChat._id)) return;
+      setActiveGroupRoom(null);
+      if (selectedChat?._id) {
+        localStorage.removeItem(`active-call-${selectedChat._id}`);
+      }
+      if (isGroupCallOpen && String(roomId) === String(activeGroupRoom?.roomId)) {
+        setIsGroupCallOpen(false);
+      }
+    };
+
+    const handleHostChanged = ({ roomId, chatId, hostId }) => {
+      if (String(chatId) !== String(selectedChat._id)) return;
+      setActiveGroupRoom((prev) =>
+        prev && String(prev.roomId) === String(roomId) ? { ...prev, hostId } : prev
+      );
+    };
+
+    socket.on("call:room:create", handleRoomCreate);
+    socket.on("call:room:ended", handleRoomEnded);
+    socket.on("call:room:hostChanged", handleHostChanged);
+
+    return () => {
+      socket.off("call:room:create", handleRoomCreate);
+      socket.off("call:room:ended", handleRoomEnded);
+      socket.off("call:room:hostChanged", handleHostChanged);
+    };
+  }, [socket, selectedChat?._id, isGroupCallOpen, activeGroupRoom?.roomId]);
+
+  useEffect(() => {
+    if (!selectedChat?.isGroup) return;
+    let isMounted = true;
+    const fetchActiveRoom = async () => {
+      try {
+        const res = await axiosInstance.get("/calls/rooms/active", {
+          params: { chatId: selectedChat._id },
+        });
+        if (!isMounted) return;
+        if (res.data?.roomId) {
+          setActiveGroupRoom(res.data);
+          setGroupCallType(res.data.callType || "video");
+          const shouldAutoJoin =
+            localStorage.getItem(`active-call-${selectedChat._id}`) === "true";
+          if (shouldAutoJoin && !autoJoinGuardRef.current && !isGroupCallOpen) {
+            autoJoinGuardRef.current = true;
+            await joinGroupCall(true);
+          }
+        } else {
+          setActiveGroupRoom(null);
+        }
+      } catch (error) {
+        console.error("fetchActiveRoom error", error?.message || error);
+      }
+    };
+    fetchActiveRoom();
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedChat?._id, selectedChat?.isGroup]);
+
+  const startGroupCall = async (callType) => {
+    if (!selectedChat?._id) return;
+    try {
+      setGroupCallType(callType);
+      const res = await axiosInstance.post("/calls/rooms", {
+        chatId: selectedChat._id,
+        callType,
+      });
+      const room = res.data;
+      setActiveGroupRoom(room);
+      const socket = useAuthStore.getState().socket;
+      if (res.status === 201) {
+        socket?.emit("call:room:create", {
+          roomId: room.roomId,
+          chatId: selectedChat._id,
+        });
+      } else {
+        socket?.emit("call:room:join", {
+          roomId: room.roomId,
+          chatId: selectedChat._id,
+        });
+      }
+      setGroupCallType(room.callType || callType);
+      setIsGroupCallOpen(true);
+      localStorage.setItem(`active-call-${selectedChat._id}`, "true");
+    } catch (error) {
+      const msg =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        error?.message ||
+        "Failed to start group call";
+      toast.error(msg);
+    }
+  };
+
+  const joinGroupCall = async (isAutoJoin = false) => {
+    if (!activeGroupRoom?.roomId) return;
+    try {
+      const res = await axiosInstance.post(`/calls/rooms/${activeGroupRoom.roomId}/join`);
+      const room = res.data;
+      setActiveGroupRoom(room);
+      setGroupCallType(room.callType || "video");
+      const socket = useAuthStore.getState().socket;
+      socket?.emit("call:room:join", {
+        roomId: room.roomId,
+        chatId: selectedChat._id,
+      });
+      setIsGroupCallOpen(true);
+      localStorage.setItem(`active-call-${selectedChat._id}`, "true");
+    } catch (error) {
+      if (!isAutoJoin) {
+        const msg =
+          error?.response?.data?.message ||
+          error?.response?.data?.error ||
+          error?.message ||
+          "Failed to join group call";
+        toast.error(msg);
+      }
+    }
+  };
+
+  const leaveGroupCall = async () => {
+    if (!activeGroupRoom?.roomId) return;
+    try {
+      await axiosInstance.post(`/calls/rooms/${activeGroupRoom.roomId}/leave`);
+      const socket = useAuthStore.getState().socket;
+      socket?.emit("call:room:leave", {
+        roomId: activeGroupRoom.roomId,
+        chatId: selectedChat._id,
+      });
+    } catch (error) {
+      console.error("leaveGroupCall error", error?.message || error);
+    } finally {
+      setIsGroupCallOpen(false);
+      if (selectedChat?._id) {
+        localStorage.removeItem(`active-call-${selectedChat._id}`);
+      }
+    }
+  };
+
+  const endGroupCall = async () => {
+    if (!activeGroupRoom?.roomId) return;
+    try {
+      await axiosInstance.post(`/calls/rooms/${activeGroupRoom.roomId}/end`);
+      const socket = useAuthStore.getState().socket;
+      socket?.emit("call:room:ended", {
+        roomId: activeGroupRoom.roomId,
+        chatId: selectedChat._id,
+      });
+      setActiveGroupRoom(null);
+    } catch (error) {
+      const msg =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        error?.message ||
+        "Failed to end group call";
+      toast.error(msg);
+    } finally {
+      setIsGroupCallOpen(false);
+      if (selectedChat?._id) {
+        localStorage.removeItem(`active-call-${selectedChat._id}`);
+      }
+    }
+  };
+
   return (
     <>
       <div className="p-2.5 border-b border-base-300">
@@ -773,12 +952,42 @@ const ChatHeader = () => {
               </button>
             </>
           )}
+          {!callTargetId && selectedChat?.isGroup && (
+            <>
+              <button
+                className="btn btn-sm btn-circle"
+                title="Start group audio call"
+                onClick={() => startGroupCall("audio")}
+              >
+                <Phone className="size-4" />
+              </button>
+              <button
+                className="btn btn-sm btn-circle"
+                title="Start group video call"
+                onClick={() => startGroupCall("video")}
+              >
+                <Video className="size-4" />
+              </button>
+            </>
+          )}
           {/* Close button */}
           <button onClick={() => setSelectedChat(null)}>
             <X />
           </button>
         </div>
       </div>
+
+      {selectedChat?.isGroup && activeGroupRoom?.roomId && !isGroupCallOpen && (
+        <div className="mt-3 p-3 rounded-lg border border-base-300 bg-base-200 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm">
+            <Users className="size-4" />
+            <span>Group call in progress</span>
+          </div>
+          <button className="btn btn-sm btn-primary" onClick={joinGroupCall}>
+            Join call
+          </button>
+        </div>
+      )}
 
       {pendingIncomingCall && !isCallModalOpen && (
         <div className="mt-3 p-3 rounded-lg border border-base-300 bg-base-200 flex items-center justify-between gap-3">
@@ -824,6 +1033,16 @@ const ChatHeader = () => {
       <GroupSettingsModal
         isOpen={isGroupSettingsOpen}
         onClose={() => setIsGroupSettingsOpen(false)}
+      />
+      <GroupCallModal
+        isOpen={isGroupCallOpen}
+        roomId={activeGroupRoom?.roomId}
+        chatId={selectedChat?._id}
+        callType={groupCallType}
+        isHost={String(activeGroupRoom?.hostId) === String(authUser?._id)}
+        onClose={leaveGroupCall}
+        onLeave={leaveGroupCall}
+        onEnd={endGroupCall}
       />
     </>
   );

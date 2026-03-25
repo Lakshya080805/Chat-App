@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAuthStore } from "../store/useAuthStore";
+import { axiosInstance } from "../lib/axios";
 import { useChatStore } from "../store/useChatStore";
 
 const toBase64 = (file) =>
@@ -39,6 +40,11 @@ const GroupSettingsModal = ({ isOpen, onClose }) => {
   const [isGeneratingInvite, setIsGeneratingInvite] = useState(false);
   const [shareUserIds, setShareUserIds] = useState([]);
   const [isSharingInvite, setIsSharingInvite] = useState(false);
+  const [callHistory, setCallHistory] = useState([]);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState("members");
+  const [memberSearch, setMemberSearch] = useState("");
+  const [isAddMembersOpen, setIsAddMembersOpen] = useState(false);
 
   const isAdmin = selectedChat?.admins?.some(
     (adminId) => String(adminId) === String(authUser?._id)
@@ -55,6 +61,14 @@ const GroupSettingsModal = ({ isOpen, onClose }) => {
     [users, currentMemberIds]
   );
 
+  const filteredMembers = useMemo(() => {
+    const query = memberSearch.trim().toLowerCase();
+    if (!query) return chatMembers;
+    return chatMembers.filter((member) =>
+      `${member.fullName || ""} ${member.email || ""}`.toLowerCase().includes(query)
+    );
+  }, [chatMembers, memberSearch]);
+
   useEffect(() => {
     if (!isOpen) {
       setSelectedMemberIds([]);
@@ -64,8 +78,44 @@ const GroupSettingsModal = ({ isOpen, onClose }) => {
       setInviteExpiresAt(null);
       setInviteCountdown("");
       setShareUserIds([]);
+      setCallHistory([]);
+      setActiveTab("members");
+      setMemberSearch("");
+      setIsAddMembersOpen(false);
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    const fetchHistory = async () => {
+      if (!isOpen || !selectedChat?._id || !selectedChat?.isGroup) return;
+      setIsHistoryLoading(true);
+      try {
+        const res = await axiosInstance.get("/calls/rooms/history", {
+          params: { chatId: selectedChat._id },
+        });
+        setCallHistory(res.data?.history || []);
+      } catch (error) {
+        const message =
+          error?.response?.data?.message ||
+          error?.response?.data?.error ||
+          error?.message ||
+          "Failed to load call history";
+        toast.error(message);
+      } finally {
+        setIsHistoryLoading(false);
+      }
+    };
+
+    fetchHistory();
+  }, [isOpen, selectedChat?._id, selectedChat?.isGroup]);
+
+  const formatDuration = (seconds = 0) => {
+    const total = Math.max(0, Math.floor(seconds));
+    const mins = Math.floor(total / 60);
+    const secs = total % 60;
+    if (mins > 0) return `${mins}m ${secs}s`;
+    return `${secs}s`;
+  };
 
   useEffect(() => {
     if (!inviteExpiresAt) return;
@@ -190,276 +240,361 @@ const GroupSettingsModal = ({ isOpen, onClose }) => {
           </button>
         </div>
 
-        <div className="p-4 space-y-4 overflow-y-auto">
-          <section className="space-y-2">
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-medium">Add members</h4>
+        <div className="border-b border-base-200 px-4 py-2">
+          <div className="tabs tabs-bordered">
+            {[
+              { key: "members", label: "Members" },
+              { key: "invite", label: "Invite" },
+              { key: "calls", label: "Calls" },
+              { key: "danger", label: "Danger" },
+            ].map((tab) => (
               <button
+                key={tab.key}
                 type="button"
-                className="text-xs text-primary"
-                disabled={!isAdmin}
-                onClick={() => setSelectedMemberIds([])}
+                className={`tab ${activeTab === tab.key ? "tab-active" : ""}`}
+                onClick={() => setActiveTab(tab.key)}
               >
-                Clear selection
+                {tab.label}
               </button>
-            </div>
-            <div className="max-h-52 space-y-2 overflow-y-auto rounded-lg border border-base-200 p-2">
-              {availableUsers.length === 0 && (
-                <p className="text-xs text-zinc-400">No additional users available.</p>
-              )}
-              {availableUsers.map((user) => (
-                <button
-                  key={user._id}
-                  type="button"
-                  disabled={!isAdmin}
-                  onClick={() => toggleSelection(user._id)}
-                  className={`flex items-center gap-3 w-full rounded-lg border px-3 py-2 text-left transition ${
-                    selectedMemberIds.includes(user._id)
-                      ? "border-primary bg-primary/10"
-                      : "border-base-200 bg-base-100"
-                  } ${!isAdmin ? "opacity-70 cursor-not-allowed" : ""}`}
-                >
-                  <img
-                    src={user.profilePic || "/avatar.png"}
-                    alt={user.fullName}
-                    className="size-8 rounded-full object-cover border"
-                  />
-                  <div>
-                    <p className="font-medium">{user.fullName}</p>
-                    <p className="text-xs text-zinc-400">{user.email}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              disabled={!isAdmin || selectedMemberIds.length === 0 || isAdding}
-              onClick={handleAddMembers}
-            >
-              {isAdding ? "Adding..." : "Add selected members"}
-            </button>
-          </section>
+            ))}
+          </div>
+        </div>
 
-          <section className="space-y-2">
-            <h4 className="text-sm font-medium">Group photo</h4>
-            <div className="flex items-center gap-3">
-              <div className="relative h-16 w-16 overflow-hidden rounded-full border border-base-200 bg-base-100">
-                <img
-                  src={photoPreview || selectedChat.groupPhoto || "/avatar.png"}
-                  alt="group"
-                  className="h-full w-full object-cover"
+        <div className="p-4 space-y-4 overflow-y-auto">
+          {activeTab === "members" && (
+            <>
+              <section className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-medium">Add members</h4>
+                  <button
+                    type="button"
+                    className="text-xs text-primary"
+                    disabled={!isAdmin}
+                    onClick={() => setSelectedMemberIds([])}
+                  >
+                    Clear selection
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm w-full"
+                  onClick={() => setIsAddMembersOpen((prev) => !prev)}
+                  disabled={!isAdmin}
+                >
+                  {isAddMembersOpen ? "Hide add members" : "Add members"}
+                </button>
+                {isAddMembersOpen && (
+                  <>
+                    <div className="max-h-52 space-y-2 overflow-y-auto rounded-lg border border-base-200 p-2">
+                      {availableUsers.length === 0 && (
+                        <p className="text-xs text-zinc-400">No additional users available.</p>
+                      )}
+                      {availableUsers.map((user) => (
+                        <button
+                          key={user._id}
+                          type="button"
+                          disabled={!isAdmin}
+                          onClick={() => toggleSelection(user._id)}
+                          className={`flex items-center gap-3 w-full rounded-lg border px-3 py-2 text-left transition ${
+                            selectedMemberIds.includes(user._id)
+                              ? "border-primary bg-primary/10"
+                              : "border-base-200 bg-base-100"
+                          } ${!isAdmin ? "opacity-70 cursor-not-allowed" : ""}`}
+                        >
+                          <img
+                            src={user.profilePic || "/avatar.png"}
+                            alt={user.fullName}
+                            className="size-8 rounded-full object-cover border"
+                          />
+                          <div>
+                            <p className="font-medium">{user.fullName}</p>
+                            <p className="text-xs text-zinc-400">{user.email}</p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      disabled={!isAdmin || selectedMemberIds.length === 0 || isAdding}
+                      onClick={handleAddMembers}
+                    >
+                      {isAdding ? "Adding..." : "Add selected members"}
+                    </button>
+                  </>
+                )}
+              </section>
+
+              <section className="space-y-2">
+                <h4 className="text-sm font-medium">Group photo</h4>
+                <div className="flex items-center gap-3">
+                  <div className="relative h-16 w-16 overflow-hidden rounded-full border border-base-200 bg-base-100">
+                    <img
+                      src={photoPreview || selectedChat.groupPhoto || "/avatar.png"}
+                      alt="group"
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="btn btn-sm">
+                      {photoFile ? "Change image" : "Upload image"}
+                      <input type="file" accept="image/*" className="hidden" onChange={handlePhotoChange} />
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      onClick={handleUpdatePhoto}
+                      disabled={!photoFile || isUploadingPhoto || !isAdmin}
+                    >
+                      {isUploadingPhoto ? "Updating..." : "Update display picture"}
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <section className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-medium">Current members</h4>
+                  <span className="text-xs text-zinc-500">{chatMembers.length} total</span>
+                </div>
+                <input
+                  type="text"
+                  className="input input-bordered input-sm w-full"
+                  placeholder="Search members..."
+                  value={memberSearch}
+                  onChange={(event) => setMemberSearch(event.target.value)}
                 />
+                <div className="space-y-2">
+                  {filteredMembers.map((member) => {
+                    const isSelf = String(member._id) === String(authUser?._id);
+                    const isMemberAdmin = selectedChat.admins?.some(
+                      (adminId) => String(adminId) === String(member._id)
+                    );
+                    return (
+                      <div
+                        key={member._id}
+                        className="flex items-center justify-between rounded-lg border border-base-200 px-3 py-2"
+                      >
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={member.profilePic || "/avatar.png"}
+                            alt={member.fullName}
+                            className="size-8 rounded-full object-cover border"
+                          />
+                          <div>
+                            <p className="font-medium">
+                              {member.fullName} {isSelf && "(you)"}
+                            </p>
+                            <p className="text-xs text-zinc-400">
+                              {isMemberAdmin ? "Admin" : "Member"}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          {isAdmin && isMemberAdmin && !isSelf && (
+                            <button
+                              type="button"
+                              className="btn btn-outline btn-xs"
+                              onClick={() => handleDemote(member._id)}
+                            >
+                              Demote
+                            </button>
+                          )}
+                          {isAdmin && !isMemberAdmin && (
+                            <button
+                              type="button"
+                              className="btn btn-outline btn-xs"
+                              onClick={() => handlePromote(member._id)}
+                            >
+                              Promote
+                            </button>
+                          )}
+                          {isAdmin && !isSelf && (
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-xs text-error"
+                              disabled={removingId === member._id}
+                              onClick={() => handleRemoveMember(member._id)}
+                            >
+                              {removingId === member._id ? "Removing..." : "Remove"}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            </>
+          )}
+
+          {activeTab === "invite" && (
+            <section className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-medium">Invite link</h4>
+                <span className="text-xs text-zinc-500">
+                  {inviteCountdown
+                    ? inviteCountdown === "Expired"
+                      ? "Expired"
+                      : `Expires in ${inviteCountdown}`
+                    : "No active link"}
+                </span>
+              </div>
+              <div className="rounded-lg border border-base-200 bg-base-100 p-3 space-y-2">
+                {inviteLink ? (
+                  <>
+                    <a
+                      href={inviteLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-blue-600 break-all underline"
+                    >
+                      {inviteLink}
+                    </a>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-xs"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(inviteLink);
+                            toast.success("Invite link copied");
+                          } catch {
+                            toast.error("Could not copy link");
+                          }
+                        }}
+                      >
+                        Copy link
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-xs"
+                        onClick={() =>
+                          window.open(
+                            `https://wa.me/?text=${encodeURIComponent(inviteLink)}`,
+                            "_blank",
+                            "noopener,noreferrer"
+                          )
+                        }
+                      >
+                        Share on WhatsApp
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-xs"
+                        disabled={!isAdmin || isGeneratingInvite}
+                        onClick={handleGenerateInvite}
+                      >
+                        {isGeneratingInvite ? "Regenerating..." : "Regenerate link"}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    disabled={!isAdmin || isGeneratingInvite}
+                    onClick={handleGenerateInvite}
+                  >
+                    {isGeneratingInvite ? "Generating..." : "Generate invite link"}
+                  </button>
+                )}
+              </div>
+              {inviteLink && (
+                <div className="rounded-lg border border-base-200 bg-base-100 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h5 className="text-xs font-semibold">Share with users</h5>
+                    <span className="text-xs text-zinc-400">
+                      {shareUserIds.length} selected
+                    </span>
+                  </div>
+                  <div className="max-h-40 overflow-y-auto space-y-2">
+                    {availableUsers.length === 0 && (
+                      <p className="text-xs text-zinc-400">No additional users available.</p>
+                    )}
+                    {availableUsers.map((user) => (
+                      <label
+                        key={`share-${user._id}`}
+                        className="flex items-center gap-2 text-xs cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          className="checkbox checkbox-xs"
+                          checked={shareUserIds.includes(user._id)}
+                          onChange={() => toggleShareUser(user._id)}
+                        />
+                        <span className="font-medium">{user.fullName}</span>
+                        <span className="text-zinc-400">{user.email}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    disabled={shareUserIds.length === 0 || isSharingInvite}
+                    onClick={handleShareInvite}
+                  >
+                    {isSharingInvite ? "Sharing..." : "Send invite message"}
+                  </button>
+                </div>
+              )}
+            </section>
+          )}
+
+          {activeTab === "calls" && (
+            <section className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-medium">Call history</h4>
+                <span className="text-xs text-zinc-500">{callHistory.length} recent</span>
               </div>
               <div className="space-y-2">
-                <label className="btn btn-sm">
-                  {photoFile ? "Change image" : "Upload image"}
-                  <input type="file" accept="image/*" className="hidden" onChange={handlePhotoChange} />
-                </label>
-                <button
-                  type="button"
-                  className="btn btn-outline btn-sm"
-                  onClick={handleUpdatePhoto}
-                  disabled={!photoFile || isUploadingPhoto || !isAdmin}
-                >
-                  {isUploadingPhoto ? "Updating..." : "Update display picture"}
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <section className="space-y-2">
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-medium">Invite link</h4>
-              <span className="text-xs text-zinc-500">
-                {inviteCountdown
-                  ? inviteCountdown === "Expired"
-                    ? "Expired"
-                    : `Expires in ${inviteCountdown}`
-                  : "No active link"}
-              </span>
-            </div>
-            <div className="rounded-lg border border-base-200 bg-base-100 p-3 space-y-2">
-              {inviteLink ? (
-                <>
-                  <a
-                    href={inviteLink}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-xs text-blue-600 break-all underline"
-                  >
-                    {inviteLink}
-                  </a>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className="btn btn-outline btn-xs"
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(inviteLink);
-                          toast.success("Invite link copied");
-                        } catch {
-                          toast.error("Could not copy link");
-                        }
-                      }}
-                    >
-                      Copy link
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-outline btn-xs"
-                      onClick={() =>
-                        window.open(
-                          `https://wa.me/?text=${encodeURIComponent(inviteLink)}`,
-                          "_blank",
-                          "noopener,noreferrer"
-                        )
-                      }
-                    >
-                      Share on WhatsApp
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-xs"
-                      disabled={!isAdmin || isGeneratingInvite}
-                      onClick={handleGenerateInvite}
-                    >
-                      {isGeneratingInvite ? "Regenerating..." : "Regenerate link"}
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  disabled={!isAdmin || isGeneratingInvite}
-                  onClick={handleGenerateInvite}
-                >
-                  {isGeneratingInvite ? "Generating..." : "Generate invite link"}
-                </button>
-              )}
-            </div>
-            {inviteLink && (
-              <div className="rounded-lg border border-base-200 bg-base-100 p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <h5 className="text-xs font-semibold">Share with users</h5>
-                  <span className="text-xs text-zinc-400">
-                    {shareUserIds.length} selected
-                  </span>
-                </div>
-                <div className="max-h-40 overflow-y-auto space-y-2">
-                  {availableUsers.length === 0 && (
-                    <p className="text-xs text-zinc-400">No additional users available.</p>
-                  )}
-                  {availableUsers.map((user) => (
-                    <label
-                      key={`share-${user._id}`}
-                      className="flex items-center gap-2 text-xs cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        className="checkbox checkbox-xs"
-                        checked={shareUserIds.includes(user._id)}
-                        onChange={() => toggleShareUser(user._id)}
-                      />
-                      <span className="font-medium">{user.fullName}</span>
-                      <span className="text-zinc-400">{user.email}</span>
-                    </label>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  disabled={shareUserIds.length === 0 || isSharingInvite}
-                  onClick={handleShareInvite}
-                >
-                  {isSharingInvite ? "Sharing..." : "Send invite message"}
-                </button>
-              </div>
-            )}
-          </section>
-
-          <section className="space-y-2">
-            <div className="flex items-center justify-between">
-              <h4 className="text-sm font-medium">Current members</h4>
-              <span className="text-xs text-zinc-500">{chatMembers.length} total</span>
-            </div>
-            <div className="space-y-2">
-              {chatMembers.map((member) => {
-                const isSelf = String(member._id) === String(authUser?._id);
-                const isMemberAdmin = selectedChat.admins?.some(
-                  (adminId) => String(adminId) === String(member._id)
-                );
-                return (
+                {isHistoryLoading && (
+                  <p className="text-xs text-zinc-400">Loading call history...</p>
+                )}
+                {!isHistoryLoading && callHistory.length === 0 && (
+                  <p className="text-xs text-zinc-400">No calls recorded yet.</p>
+                )}
+                {callHistory.map((item) => (
                   <div
-                    key={member._id}
-                    className="flex items-center justify-between rounded-lg border border-base-200 px-3 py-2"
+                    key={item._id}
+                    className="flex items-center justify-between rounded-lg border border-base-200 px-3 py-2 text-xs"
                   >
-                    <div className="flex items-center gap-3">
-                      <img
-                        src={member.profilePic || "/avatar.png"}
-                        alt={member.fullName}
-                        className="size-8 rounded-full object-cover border"
-                      />
-                      <div>
-                        <p className="font-medium">
-                          {member.fullName} {isSelf && "(you)"}
-                        </p>
-                        <p className="text-xs text-zinc-400">
-                          {isMemberAdmin ? "Admin" : "Member"}
-                        </p>
-                      </div>
+                    <div>
+                      <p className="font-medium">
+                        {item.callType === "audio" ? "Audio call" : "Video call"}
+                      </p>
+                      <p className="text-zinc-400">
+                        {item.participants?.length || 0} participants
+                      </p>
                     </div>
-                    <div className="flex items-center gap-1">
-                      {isAdmin && isMemberAdmin && !isSelf && (
-                        <button
-                          type="button"
-                          className="btn btn-outline btn-xs"
-                          onClick={() => handleDemote(member._id)}
-                        >
-                          Demote
-                        </button>
-                      )}
-                      {isAdmin && !isMemberAdmin && (
-                        <button
-                          type="button"
-                          className="btn btn-outline btn-xs"
-                          onClick={() => handlePromote(member._id)}
-                        >
-                          Promote
-                        </button>
-                      )}
-                      {isAdmin && !isSelf && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-xs text-error"
-                          disabled={removingId === member._id}
-                          onClick={() => handleRemoveMember(member._id)}
-                        >
-                          {removingId === member._id ? "Removing..." : "Remove"}
-                        </button>
-                      )}
+                    <div className="text-right">
+                      <p className="font-medium">{formatDuration(item.durationSeconds)}</p>
+                      <p className="text-zinc-400">
+                        {item.endedAt ? new Date(item.endedAt).toLocaleString() : "--"}
+                      </p>
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          </section>
+                ))}
+              </div>
+            </section>
+          )}
 
-          <section className="space-y-2 rounded-lg border border-red-200 bg-red-50 p-3">
-            <h4 className="text-sm font-medium text-red-600">Danger zone</h4>
-            <p className="text-xs text-red-600">
-              Leaving removes you from the chat. If you're the last member, the group will be deleted.
-            </p>
-            <button
-              type="button"
-              className="btn btn-error btn-sm w-full"
-              onClick={handleLeaveGroup}
-              disabled={isLeaving}
-            >
-              {isLeaving ? "Leaving..." : "Leave group"}
-            </button>
-          </section>
+          {activeTab === "danger" && (
+            <section className="space-y-2 rounded-lg border border-red-200 bg-red-50 p-3">
+              <h4 className="text-sm font-medium text-red-600">Danger zone</h4>
+              <p className="text-xs text-red-600">
+                Leaving removes you from the chat. If you're the last member, the group will be deleted.
+              </p>
+              <button
+                type="button"
+                className="btn btn-error btn-sm w-full"
+                onClick={handleLeaveGroup}
+                disabled={isLeaving}
+              >
+                {isLeaving ? "Leaving..." : "Leave group"}
+              </button>
+            </section>
+          )}
         </div>
       </div>
     </div>

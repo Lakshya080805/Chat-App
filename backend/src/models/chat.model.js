@@ -28,6 +28,23 @@ const chatSchema = new mongoose.Schema(
         ref: "User",
       },
     ],
+    activeCallRoomId: {
+      type: String,
+      default: null,
+    },
+    activeCallType: {
+      type: String,
+      enum: ["audio", "video", null],
+      default: null,
+    },
+    activeCallStartedAt: {
+      type: Date,
+      default: null,
+    },
+    activeCallEndedAt: {
+      type: Date,
+      default: null,
+    },
     inviteCode: {
       type: String,
       unique: true,

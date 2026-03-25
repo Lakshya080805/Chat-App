@@ -213,6 +213,50 @@ io.on("connection", (socket) => {
       isTyping: Boolean(isTyping),
     });
   });
+
+  socket.on("call:room:create", ({ roomId, chatId }) => {
+    if (!userId || !roomId || !chatId) return;
+    const normalizedChatId = String(chatId);
+    const normalizedRoomId = String(roomId);
+    socket.join(normalizedRoomId);
+    socket.to(normalizedChatId).emit("call:room:create", {
+      roomId: normalizedRoomId,
+      chatId: normalizedChatId,
+      hostId: userId,
+    });
+  });
+
+  socket.on("call:room:join", ({ roomId, chatId }) => {
+    if (!userId || !roomId || !chatId) return;
+    const normalizedRoomId = String(roomId);
+    socket.join(normalizedRoomId);
+    socket.to(normalizedRoomId).emit("call:room:join", {
+      roomId: normalizedRoomId,
+      chatId: String(chatId),
+      userId,
+    });
+  });
+
+  socket.on("call:room:leave", ({ roomId, chatId }) => {
+    if (!userId || !roomId || !chatId) return;
+    const normalizedRoomId = String(roomId);
+    socket.leave(normalizedRoomId);
+    socket.to(normalizedRoomId).emit("call:room:leave", {
+      roomId: normalizedRoomId,
+      chatId: String(chatId),
+      userId,
+    });
+  });
+
+  socket.on("call:room:ended", ({ roomId, chatId }) => {
+    if (!userId || !roomId || !chatId) return;
+    const normalizedRoomId = String(roomId);
+    io.to(normalizedRoomId).emit("call:room:ended", {
+      roomId: normalizedRoomId,
+      chatId: String(chatId),
+      endedBy: userId,
+    });
+  });
 });
 
 const normalizeUserIds = (userIds = []) =>
