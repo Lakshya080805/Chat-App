@@ -1,27 +1,46 @@
 import mongoose from "mongoose";
 
-const userSchema=new mongoose.Schema(
+const reactionSchema = new mongoose.Schema(
     {
-        senderId:{
-            type:mongoose.Schema.Types.ObjectId,
-            ref:"user",
-            required:true,
+        userId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "user",
+            required: true,
         },
-        recieverId:{
-            type:mongoose.Schema.Types.ObjectId,
-            ref:"user",
-            required:true,
-        },
-        text:{
-            type:String,
-        },
-        image:{
-            type:String,
+        emoji: {
+            type: String,
+            required: true,
         },
     },
-    {timestamps:true}
+    { _id: false }
 );
 
-const Message=mongoose.model("Message",userSchema);
+const messageSchema = new mongoose.Schema(
+    {
+        senderId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "user",
+            required: true,
+        },
+        chatId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Chat",
+            required: true,
+        },
+        text: {
+            type: String,
+        },
+        image: {
+            type: String,
+        },
+        reactions: {
+            type: [reactionSchema],
+            default: [],
+        },
+    },
+    { timestamps: true }
+);
+
+const Message=mongoose.model("Message",messageSchema);
 
 export default Message;

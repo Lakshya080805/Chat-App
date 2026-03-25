@@ -54,6 +54,7 @@ import {connectDB} from "./lib/db.js"
 import authRoutes from "./routes/auth.route.js"
 import messageRoutes from "./routes/message.route.js"
 import callRoutes from "./routes/call.route.js"
+import chatRoutes from "./routes/chat.route.js"
 import { app,server } from "./lib/socket.js";
 
 dotenv.config();
@@ -80,6 +81,7 @@ app.get("/_health", (req, res) => res.sendStatus(200));
 app.use("/api/auth",authRoutes)
 app.use("/api/messages",messageRoutes)
 app.use("/api/calls",callRoutes)
+app.use("/api/chats", chatRoutes)
 
 // if(process.env.NODE_ENV==="production"){
 //     app.use(express.static(path.join(__dirname,"../frontend/dist")));

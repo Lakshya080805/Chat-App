@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useChatStore } from "../store/useChatStore";
 import { Image, Send, X } from "lucide-react";
 import toast from "react-hot-toast";
@@ -7,7 +7,59 @@ const MessageInput = () => {
   const [text, setText] = useState("");
   const [imagePreview, setImagePreview] = useState(null);
   const fileInputRef = useRef(null);
-  const { sendMessage } = useChatStore();
+  const typingTimeoutRef = useRef(null);
+  const isTypingRef = useRef(false);
+  const typingChatIdRef = useRef(null);
+  const { selectedChat, sendMessage, sendTypingStatus } = useChatStore();
+
+  const clearTypingTimeout = () => {
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+  };
+
+  const stopTypingIndicator = () => {
+    clearTypingTimeout();
+    if (isTypingRef.current && typingChatIdRef.current) {
+      sendTypingStatus({ chatId: typingChatIdRef.current, isTyping: false });
+      isTypingRef.current = false;
+      typingChatIdRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    stopTypingIndicator();
+  }, [selectedChat?._id]);
+
+  useEffect(() => {
+    return () => {
+      stopTypingIndicator();
+    };
+  }, []);
+
+  const notifyTyping = (value) => {
+    if (!selectedChat) return;
+    const shouldBeTyping = value.trim().length > 0;
+    if (shouldBeTyping) {
+      if (!isTypingRef.current) {
+        sendTypingStatus({ chatId: selectedChat._id, isTyping: true });
+        isTypingRef.current = true;
+        typingChatIdRef.current = selectedChat._id;
+      }
+      clearTypingTimeout();
+      typingTimeoutRef.current = setTimeout(() => {
+        stopTypingIndicator();
+      }, 1500);
+    } else {
+      stopTypingIndicator();
+    }
+  };
+
+  const handleTextChange = (value) => {
+    setText(value);
+    notifyTyping(value);
+  };
 
   const handleImageChange = (e) => {
     const file = e.target.files[0];
@@ -33,6 +85,7 @@ const MessageInput = () => {
     if (!text.trim() && !imagePreview) return;
 
     try {
+      stopTypingIndicator();
       await sendMessage({
         text: text.trim(),
         image: imagePreview,
@@ -76,7 +129,7 @@ const MessageInput = () => {
             className="w-full input input-bordered rounded-lg input-sm sm:input-md"
             placeholder="Type a message..."
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => handleTextChange(e.target.value)}
           />
           <input
             type="file"

@@ -1,11 +1,12 @@
 
 import { useEffect, useRef, useState } from "react";
-import { Phone, Video, X } from "lucide-react";
+import { Phone, Video, X, MoreHorizontal } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { axiosInstance } from "../lib/axios";
 import { useAuthStore } from "../store/useAuthStore";
 import { useChatStore } from "../store/useChatStore";
 import CallModal from "./CallModal";
+import GroupSettingsModal from "./GroupSettingsModal";
 
 const WEBRTC_DEBUG = String(import.meta.env.VITE_DEBUG_WEBRTC || "false").toLowerCase() === "true";
 
@@ -48,8 +49,9 @@ const buildIceServers = () => {
 };
 
 const ChatHeader = () => {
-  const { selectedUser, setSelectedUser, users } = useChatStore();
+  const { selectedChat, setSelectedChat, users } = useChatStore();
   const {
+    authUser,
     onlineUsers,
     callUser,
     answerCall,
@@ -62,6 +64,7 @@ const ChatHeader = () => {
     clearCallSignals,
   } = useAuthStore();
   const [isCallModalOpen, setIsCallModalOpen] = useState(false);
+  const [isGroupSettingsOpen, setIsGroupSettingsOpen] = useState(false);
   const [isVideoCall, setIsVideoCall] = useState(true);
   const [callStatus, setCallStatus] = useState("Idle");
   const [isMuted, setIsMuted] = useState(false);
@@ -81,6 +84,31 @@ const ChatHeader = () => {
   const ringtoneIntervalRef = useRef(null);
   const audioContextRef = useRef(null);
   const statsIntervalRef = useRef(null);
+  const otherParticipant = selectedChat?.members?.find(
+    (member) => String(member._id) !== String(authUser?._id)
+  );
+  const callTargetId = selectedChat?.isGroup ? null : otherParticipant?._id;
+  const chatTitle = selectedChat?.isGroup ? selectedChat.name || "Group chat" : otherParticipant?.fullName || "Friend";
+  const onlineGroupMembers = (selectedChat?.members || [])
+    .filter((member) => {
+      const memberId = String(member._id);
+      if (memberId === String(authUser?._id)) return false;
+      return onlineUsers.includes(memberId);
+    })
+    .map((member) => member.fullName)
+    .filter(Boolean);
+  const onlineGroupCount = onlineGroupMembers.length;
+  const onlineGroupSummary =
+    onlineGroupCount > 0
+      ? `Online: ${onlineGroupMembers.slice(0, 3).join(", ")}${
+          onlineGroupCount > 3 ? ` +${onlineGroupCount - 3}` : ""
+        }`
+      : `${selectedChat?.members?.length || 0} members`;
+  const chatSubtitle = selectedChat?.isGroup
+    ? onlineGroupSummary
+    : callTargetId && onlineUsers.includes(callTargetId)
+    ? "Online"
+    : "Offline";
 
   const playRingtonePulse = async () => {
     try {
@@ -529,18 +557,19 @@ const ChatHeader = () => {
   };
 
   const startCall = async (callType) => {
+    if (!callTargetId) return;
     try {
       logWebrtcDebug("startCall", {
-        to: selectedUser?._id,
+        to: callTargetId,
         requestedType: callType,
       });
       setCallStatus("Connecting");
       const { stream, effectiveType } = await getMediaWithFallback(callType);
       const remoteMediaStream = new MediaStream();
 
-      const peerConnection = await createPeerConnection(selectedUser._id, remoteMediaStream);
+      const peerConnection = await createPeerConnection(callTargetId, remoteMediaStream);
       peerConnectionRef.current = peerConnection;
-      activePeerUserIdRef.current = selectedUser._id;
+      activePeerUserIdRef.current = callTargetId;
 
       stream.getTracks().forEach((track) => {
         peerConnection.addTrack(track, stream);
@@ -551,12 +580,12 @@ const ChatHeader = () => {
       await waitForIceGatheringComplete(peerConnection);
       const finalOffer = peerConnection.localDescription || offer;
       logWebrtcDebug("create/setLocalDescription(offer) success", {
-        to: selectedUser._id,
+        to: callTargetId,
         effectiveType,
       });
 
       callUser({
-        to: selectedUser._id,
+        to: callTargetId,
         offer: finalOffer,
         callType: effectiveType,
       });
@@ -688,22 +717,28 @@ const ChatHeader = () => {
     : null;
 
   return (
-    <div className="p-2.5 border-b border-base-300">
-      <div className="flex items-center justify-between">
+    <>
+      <div className="p-2.5 border-b border-base-300">
+        <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           {/* Avatar */}
           <div className="avatar">
             <div className="size-10 rounded-full relative">
-              <img src={selectedUser.profilePic || "/avatar.png"} alt={selectedUser.fullName} />
+              <img
+                src={
+                  selectedChat?.isGroup
+                    ? selectedChat.groupPhoto || "/avatar.png"
+                    : otherParticipant?.profilePic || "/avatar.png"
+                }
+                alt={chatTitle}
+              />
             </div>
           </div>
 
-          {/* User info */}
+          {/* Chat info */}
           <div>
-            <h3 className="font-medium">{selectedUser.fullName}</h3>
-            <p className="text-sm text-base-content/70">
-              {onlineUsers.includes(selectedUser._id) ? "Online" : "Offline"}
-            </p>
+            <h3 className="font-medium">{chatTitle}</h3>
+            <p className="text-sm text-base-content/70">{chatSubtitle}</p>
             {callStatus !== "Idle" && (
               <p className="text-xs text-primary mt-0.5">Call: {callStatus}</p>
             )}
@@ -711,24 +746,35 @@ const ChatHeader = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Audio Call Button */}
-          <button
-            className="btn btn-sm btn-circle"
-            title="Start Audio Call"
-            onClick={() => startCall("audio")}
-          >
-            <Phone className="size-4" />
-          </button>
-          {/* Video Call Button */}
-          <button
-            className="btn btn-sm btn-circle"
-            title="Start Video Call"
-            onClick={() => startCall("video")}
-          >
-            <Video className="size-4" />
-          </button>
+          {selectedChat?.isGroup && (
+            <button
+              className="btn btn-sm btn-circle"
+              title="Group settings"
+              onClick={() => setIsGroupSettingsOpen(true)}
+            >
+              <MoreHorizontal className="size-4" />
+            </button>
+          )}
+          {callTargetId && (
+            <>
+              <button
+                className="btn btn-sm btn-circle"
+                title="Start Audio Call"
+                onClick={() => startCall("audio")}
+              >
+                <Phone className="size-4" />
+              </button>
+              <button
+                className="btn btn-sm btn-circle"
+                title="Start Video Call"
+                onClick={() => startCall("video")}
+              >
+                <Video className="size-4" />
+              </button>
+            </>
+          )}
           {/* Close button */}
-          <button onClick={() => setSelectedUser(null)}>
+          <button onClick={() => setSelectedChat(null)}>
             <X />
           </button>
         </div>
@@ -774,7 +820,12 @@ const ChatHeader = () => {
           remoteCandidateCount,
         }}
       />
-    </div>
+      </div>
+      <GroupSettingsModal
+        isOpen={isGroupSettingsOpen}
+        onClose={() => setIsGroupSettingsOpen(false)}
+      />
+    </>
   );
 };
 export default ChatHeader;

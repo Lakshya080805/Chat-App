@@ -1,43 +1,9 @@
-// import {Server} from "socket.io";
-// import http from "http";
-// import express from 'express';
-
-// const app=express();
-// const server=http.createServer(app);
-
-// const io=new Server(server,{
-//     cors:{
-//         origin:["http://localhost:5173"]
-//     },
-// });
-
-// export function getRecieverSocketId(userId){
-//     return userSocketMap[userId];
-// }
-
-// const userSocketMap={}; //{userId:socketId}
-
-
-// io.on("connection",(socket)=>{
-//     console.log("A user connected", socket.id);
-
-//     const userId=socket.handshake.query.userId
-//     if(userId)userSocketMap[userId]=socket.id
-
-//     // io.emit used to send events to all the connected clients
-//     io.emit("getOnlineUsers",Object.keys(userSocketMap));
-
-//     socket.on("disconnect",()=>{
-//         console.log("A user disconnected",socket.id)
-//         delete userSocketMap[userId];
-//         io.emit("getOnlineUsers",Object.keys(userSocketMap));
-//     })
-// })
-// export {io,app,server};
-
 import { Server } from "socket.io";
 import http from "http";
 import express from "express";
+
+import Chat from "../models/chat.model.js";
+import { toggleReactionOnMessage } from "../services/message.service.js";
 
 const SOCKET_DEBUG = String(process.env.DEBUG_WEBRTC || "false").toLowerCase() === "true";
 
@@ -49,11 +15,7 @@ const logSocketDebug = (...args) => {
 export const app = express();
 export const server = http.createServer(app);
 
-// Allow localhost in development and FRONTEND_URL in production
-const allowedOrigins = [
-  "http://localhost:5173", // dev Vite origin
-];
-
+const allowedOrigins = ["http://localhost:5173"];
 if (process.env.NODE_ENV === "production" && process.env.FRONTEND_URL) {
   allowedOrigins.push(process.env.FRONTEND_URL);
 }
@@ -61,7 +23,6 @@ if (process.env.NODE_ENV === "production" && process.env.FRONTEND_URL) {
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
-      // allow requests with no origin (like server-to-server or tools)
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) {
         return callback(null, true);
@@ -73,8 +34,7 @@ const io = new Server(server, {
   },
 });
 
-// Map of userId -> Set<socketId> so the same user can be connected on multiple devices/tabs.
-const userSocketMap = {}; // { userId: Set<socketId> }
+const userSocketMap = {};
 
 const getUserSocketIds = (userId) => {
   if (!userId) return [];
@@ -82,11 +42,6 @@ const getUserSocketIds = (userId) => {
   if (!sockets) return [];
   return Array.from(sockets);
 };
-
-// Backward-compatible helper used by message controller (first socket only).
-export function getRecieverSocketId(userId) {
-  return getUserSocketIds(userId)[0];
-}
 
 const emitToUser = (targetUserId, eventName, payload) => {
   const receiverSocketIds = getUserSocketIds(targetUserId);
@@ -104,10 +59,40 @@ const emitToUser = (targetUserId, eventName, payload) => {
   return true;
 };
 
+const joinSocketToRoom = (socketId, roomId) => {
+  const socketInstance = io.sockets.sockets.get(socketId);
+  if (!socketInstance) return;
+  socketInstance.join(roomId);
+};
+
+const joinUserSocketsToRoom = (userId, roomId) => {
+  const socketIds = getUserSocketIds(userId);
+  socketIds.forEach((socketId) => joinSocketToRoom(socketId, roomId));
+};
+
+const leaveUserSocketsFromRoom = (userId, roomId) => {
+  const socketIds = getUserSocketIds(userId);
+  socketIds.forEach((socketId) => {
+    const socketInstance = io.sockets.sockets.get(socketId);
+    if (!socketInstance) return;
+    socketInstance.leave(roomId);
+  });
+};
+
+const joinRoomsForExistingChats = async (socket, userId) => {
+  if (!userId) return;
+  try {
+    const chats = await Chat.find({ members: userId }).select("_id");
+    chats.forEach((chat) => {
+      socket.join(String(chat._id));
+    });
+  } catch (error) {
+    console.error("joinRoomsForExistingChats error", error?.message || error);
+  }
+};
+
 io.on("connection", (socket) => {
   console.log("A user connected", socket.id);
-
-  // Socket.IO v4 clients commonly send auth payload; fallback to handshake.query for older code
   const userId = socket.handshake.auth?.userId || socket.handshake.query?.userId;
 
   if (userId) {
@@ -120,9 +105,9 @@ io.on("connection", (socket) => {
       socketId: socket.id,
       socketCount: userSocketMap[userId].size,
     });
+    joinRoomsForExistingChats(socket, userId);
   }
 
-  // Relay WebRTC offer from caller -> callee
   socket.on("call-user", ({ to, offer, callType }) => {
     if (!to || !userId) return;
     logSocketDebug("recv call-user", {
@@ -139,7 +124,6 @@ io.on("connection", (socket) => {
     });
   });
 
-  // Relay WebRTC answer from callee -> caller
   socket.on("answer-call", ({ to, answer }) => {
     if (!to || !userId) return;
     logSocketDebug("recv answer-call", {
@@ -154,7 +138,6 @@ io.on("connection", (socket) => {
     });
   });
 
-  // Relay ICE candidates both directions
   socket.on("ice-candidate", ({ to, candidate }) => {
     if (!to || !userId) return;
     logSocketDebug("recv ice-candidate", {
@@ -169,7 +152,6 @@ io.on("connection", (socket) => {
     });
   });
 
-  // Notify remote peer that call ended/rejected
   socket.on("end-call", ({ to }) => {
     if (!to || !userId) return;
     logSocketDebug("recv end-call", { from: userId, to });
@@ -179,12 +161,10 @@ io.on("connection", (socket) => {
     });
   });
 
-  // broadcast current online users to all connected clients
   io.emit("getOnlineUsers", Object.keys(userSocketMap));
 
   socket.on("disconnect", () => {
     console.log("A user disconnected", socket.id);
-
     if (userId && userSocketMap[userId]) {
       userSocketMap[userId].delete(socket.id);
       logSocketDebug("user socket removed", {
@@ -197,9 +177,57 @@ io.on("connection", (socket) => {
         logSocketDebug("user offline", { userId });
       }
     }
-
     io.emit("getOnlineUsers", Object.keys(userSocketMap));
+  });
+
+  socket.on("message:react", async ({ messageId, emoji }, callback) => {
+    if (!userId || !messageId || !emoji) {
+      callback?.({ success: false, error: "Missing payload" });
+      return;
+    }
+
+    try {
+      const updatedMessage = await toggleReactionOnMessage({ messageId, userId, emoji });
+      if (!updatedMessage) {
+        callback?.({ success: false, error: "Message not found" });
+        return;
+      }
+      const chatRoom = updatedMessage?.chatId ? String(updatedMessage.chatId) : null;
+      if (chatRoom) {
+        io.to(chatRoom).emit("reactionUpdated", updatedMessage);
+      }
+      callback?.({ success: true });
+    } catch (error) {
+      console.error("message:react error", error?.message || error);
+      callback?.({ success: false, error: error?.message || "Failed to toggle reaction" });
+    }
+  });
+
+  socket.on("chat:typing", ({ chatId, isTyping }) => {
+    if (!userId || !chatId) return;
+    const normalizedChatId = String(chatId);
+    logSocketDebug("chat:typing", { chatId: normalizedChatId, userId, isTyping });
+    socket.to(normalizedChatId).emit("chat:typing", {
+      chatId: normalizedChatId,
+      userId,
+      isTyping: Boolean(isTyping),
+    });
   });
 });
 
-export { io };
+const normalizeUserIds = (userIds = []) =>
+  Array.from(new Set(userIds.map((id) => (id ? String(id) : "")))).filter(Boolean);
+
+export const ensureUsersInRoom = (userIds, chatId) => {
+  if (!chatId) return;
+  const normalizedRoomId = String(chatId);
+  normalizeUserIds(userIds).forEach((userId) => joinUserSocketsToRoom(userId, normalizedRoomId));
+};
+
+export const removeUsersFromRoom = (userIds, chatId) => {
+  if (!chatId) return;
+  const normalizedRoomId = String(chatId);
+  normalizeUserIds(userIds).forEach((userId) => leaveUserSocketsFromRoom(userId, normalizedRoomId));
+};
+
+export { io, emitToUser };
