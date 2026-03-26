@@ -161,11 +161,26 @@ export const useAuthStore = create((set, get) => ({
   callEndedBy: null,
 
   checkAuth: async () => {
+    const token = localStorage.getItem("chat-auth-token");
+    if (!token) {
+      set({ authUser: null, isCheckingAuth: false });
+      return;
+    }
     try {
-      const res = await axiosInstance.get("/auth/check");
+      const timeoutMs = 8000;
+      const res = await Promise.race([
+        axiosInstance.get("/auth/check"),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("auth_check_timeout")), timeoutMs)
+        ),
+      ]);
       set({ authUser: res.data });
       get().connectSocket();
     } catch (error) {
+      if (error?.message === "auth_check_timeout") {
+        set({ authUser: null });
+        return;
+      }
       if (error?.response?.status !== 401) {
         console.log("error in checkAuth", error);
       }
