@@ -11,6 +11,7 @@ const CallModal = ({
   isCameraOff = false,
   onToggleMute,
   onToggleCamera,
+  onSwitchCamera = () => {},
   diagnostics,
 }) => {
   const localVideoRef = useRef(null);
@@ -85,6 +86,9 @@ const CallModal = ({
           </button>
           <button className="btn btn-sm" onClick={onToggleCamera} disabled={!isVideo}>
             {isCameraOff ? "Camera On" : "Camera Off"}
+          </button>
+          <button className="btn btn-sm" onClick={onSwitchCamera} disabled={!isVideo}>
+            Switch Camera
           </button>
           <button className="btn btn-error btn-sm" onClick={onClose}>
             Hang Up

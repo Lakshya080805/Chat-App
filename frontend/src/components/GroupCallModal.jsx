@@ -277,6 +277,34 @@ const GroupCallModal = ({
     }
   };
 
+  const switchCamera = async () => {
+    if (!room) return;
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      toast.error("Camera switching is not supported in this browser.");
+      return;
+    }
+
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter((device) => device.kind === "videoinput");
+
+      if (videoDevices.length < 2) {
+        toast("No alternate camera found.");
+        return;
+      }
+
+      const activeDeviceId = room.getActiveDevice("videoinput");
+      const currentIndex = videoDevices.findIndex((device) => device.deviceId === activeDeviceId);
+      const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % videoDevices.length : 0;
+      const nextDevice = videoDevices[nextIndex];
+
+      await room.switchActiveDevice("videoinput", nextDevice.deviceId);
+    } catch (error) {
+      console.error("Switch camera error:", error);
+      toast.error("Could not switch camera");
+    }
+  };
+
   const toggleScreenShare = async () => {
     if (!room) return;
     const nextSharing = !isScreenSharing;
@@ -365,6 +393,9 @@ const GroupCallModal = ({
           <button className="btn btn-ghost btn-sm" onClick={toggleCamera} disabled={callType !== "video"}>
             {isCameraOff ? <VideoOff className="size-4" /> : <Video className="size-4" />}
             {isCameraOff ? "Camera off" : "Camera on"}
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={switchCamera} disabled={callType !== "video"}>
+            Switch camera
           </button>
           <button className="btn btn-ghost btn-sm" onClick={toggleScreenShare}>
             {isScreenSharing ? <MonitorOff className="size-4" /> : <MonitorUp className="size-4" />}

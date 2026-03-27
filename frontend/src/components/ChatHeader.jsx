@@ -491,6 +491,61 @@ const ChatHeader = () => {
     setIsCameraOff(nextCameraOff);
   };
 
+  const switchCamera = async () => {
+    if (!localStream) return;
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      toast.error("Camera switching is not supported in this browser.");
+      return;
+    }
+
+    const videoTracks = localStream.getVideoTracks();
+    if (videoTracks.length === 0) return;
+
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter((device) => device.kind === "videoinput");
+
+      if (videoDevices.length < 2) {
+        toast("No alternate camera found.");
+        return;
+      }
+
+      const currentTrack = videoTracks[0];
+      const currentDeviceId = currentTrack.getSettings()?.deviceId;
+      const currentIndex = videoDevices.findIndex((device) => device.deviceId === currentDeviceId);
+      const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % videoDevices.length : 0;
+      const nextDevice = videoDevices[nextIndex];
+
+      const nextStream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: nextDevice.deviceId } },
+        audio: false,
+      });
+      const nextVideoTrack = nextStream.getVideoTracks()[0];
+
+      const peerConnection = peerConnectionRef.current;
+      if (peerConnection) {
+        const sender = peerConnection.getSenders().find((s) => s.track?.kind === "video");
+        if (sender) {
+          await sender.replaceTrack(nextVideoTrack);
+        } else {
+          peerConnection.addTrack(nextVideoTrack, localStream);
+        }
+      }
+
+      nextVideoTrack.enabled = !isCameraOff;
+
+      const updatedStream = new MediaStream([
+        ...localStream.getAudioTracks(),
+        nextVideoTrack,
+      ]);
+      currentTrack.stop();
+      setLocalStream(updatedStream);
+    } catch (error) {
+      console.error("Failed to switch camera:", error);
+      toast.error("Could not switch camera.");
+    }
+  };
+
   const acceptIncomingCall = async () => {
     if (!pendingIncomingCall) return;
     if (peerConnectionRef.current) return;
@@ -1021,6 +1076,7 @@ const ChatHeader = () => {
         isCameraOff={isCameraOff}
         onToggleMute={toggleMute}
         onToggleCamera={toggleCamera}
+        onSwitchCamera={switchCamera}
         diagnostics={{
           iceConnectionState,
           connectionState,
